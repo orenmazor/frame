@@ -1,0 +1,32 @@
+# https://taskfile.dev
+
+version: "3"
+
+tasks:
+  devices:
+    cmds:
+      - adb devices
+
+  version:
+    cmds:
+      - echo "Release Version "
+      - adb shell getprop ro.build.version.release
+      - echo "API Level "
+      - adb shell getprop ro.build.version.sdk
+      - echo "Brand "
+      - adb shell getprop ro.product.brand
+      - echo "Device "
+      - adb shell getprop ro.product.device
+      - echo "Model "
+      - adb shell getprop ro.product.model
+      - echo "Product "
+      - adb shell getprop ro.product.name
+
+  list-installed-packages:
+    cmds:
+      - adb shell pm list packages
+
+  install-fotoo:
+    dir: fotoo_xapk
+    cmds:
+      - adb install-multiple com.bo.fotoo.apk config.armeabi_v7a.apk config.en.apk config.xhdpi.apk
