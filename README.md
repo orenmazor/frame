@@ -1,60 +1,80 @@
 # Frame
 
-Tools and automation for a **Frameo** digital photo frame, repurposed to run **Projectivy** (launcher) and **Fotoo** (slideshow) instead of the stock Frameo app. Photos are synced from a homelab share over the network using **ADB**.
+Tools and automation for a **Frameo** digital photo frame, repurposed to run **Projectivy** (launcher), **Fotoo** (slideshow), and **Syncthing** (photo sync) instead of the stock Frameo app.
 
 ## Overview
 
 | Piece | Role |
 |-------|------|
-| **Projectivy** | Android TV / kiosk-style launcher; set as the default home screen |
+| **Projectivy** | Android TV / kiosk-style launcher; replaces the stock home screen |
 | **Fotoo** | Photo frame slideshow app (`com.bo.fotoo`) |
-| **ADB sync** | Push images from a host folder into the frame’s picture directory |
+| **Syncthing** | Pulls photos from your Syncthing server or another device onto the frame |
+
+Setup order matters: install the launcher first, then the slideshow app, then configure Syncthing so photos land where Fotoo expects them.
 
 ```mermaid
 flowchart LR
-  subgraph homelab [Homelab]
-    SMB[SMB photo share]
-    Cron[Cron job]
-    Host[adb on host]
-    SMB --> Cron
-    Cron --> Host
+  subgraph source [Photo source]
+    Server[Syncthing server or peer]
   end
   subgraph frame [Frameo device]
-    Fotoo[Fotoo slideshow]
+    ST[Syncthing]
     Pics["/storage/emulated/0/Pictures/Frame/"]
+    Fotoo[Fotoo slideshow]
+    PI[Projectivy launcher]
+    ST --> Pics
     Fotoo --> Pics
+    PI --> Fotoo
   end
-  Host -->|adb push| Pics
+  Server -->|sync| ST
 ```
 
 ## One-time frame setup
 
 You need a USB or network ADB connection to the frame (`adb devices` should list it).
 
-1. **Install Fotoo** (split APKs from the XAPK bundle):
+### 1. Install Projectivy and set it as Home
 
-   ```bash
-   task install-fotoo
-   ```
+```bash
+task install-projectivy
+```
 
-   Requires `fotoo_xapk/` with the extracted XAPK contents (not committed; see [Repository layout](#repository-layout)).
+Requires `projectivy.apk` in the repo root (not committed).
 
-2. **Install Projectivy and pick it as Home**:
+The task opens the Android Home picker. Choose **Projectivy** and complete any on-device launcher settings so the frame boots into Projectivy instead of the stock UI.
 
-   ```bash
-   task install-projectivy
-   ```
+### 2. Install Fotoo
 
-   Requires `projectivy.apk` in the repo root (not committed).
+```bash
+task install-fotoo
+```
 
-3. Confirm packages and device info if needed:
+Requires `fotoo_xapk/` with the extracted XAPK contents (not committed; see [Repository layout](#repository-layout)).
 
-   ```bash
-   task list-installed-packages
-   task version
-   ```
+Point Fotoo at your photo folder (see [Photo sync](#photo-sync)). Launch Fotoo from Projectivy as the slideshow app.
 
-After setup, the frame boots into Projectivy and you launch Fotoo as the slideshow.
+### 3. Install and configure Syncthing
+
+```bash
+task install-syncthing
+```
+
+Requires `Syncthing_1.23.0_APKPure.apk` in the repo root (not committed).
+
+On the frame, open Syncthing and:
+
+1. Pair with your Syncthing server or another device that holds the photo library.
+2. Add a folder that syncs **into** the path Fotoo uses (default below).
+3. Let the initial sync finish before expecting new photos in the slideshow.
+
+### Verify
+
+```bash
+task list-installed-packages
+task version
+```
+
+After setup, the frame boots into Projectivy, Fotoo shows the slideshow, and Syncthing keeps the picture folder up to date.
 
 ## Photo sync
 
@@ -64,28 +84,19 @@ Fotoo reads photos from:
 /storage/emulated/0/Pictures/Frame/
 ```
 
-### Local sync (Task)
+Configure the Syncthing folder on the frame to use this path (or change Fotoo’s folder to match wherever Syncthing writes).
 
-With `photos/` populated on your machine and ADB connected:
+Photos flow from your Syncthing peer or server to the device over the network. No host-side `adb push` or cron job is required for day-to-day updates.
+
+### Optional: manual push via ADB
+
+For one-off copies or debugging without Syncthing, with `photos/` on your machine and ADB connected:
 
 ```bash
 task sync
 ```
 
 This runs `adb push` from `./photos/*` into the frame path above.
-
-### Homelab sync (cron)
-
-On the homelab, a typical job:
-
-1. Mount the SMB folder that holds your shared photos.
-2. Point that mount at `./photos` (or equivalent).
-3. Ensure the frame is reachable via ADB (`adb connect <frame-ip>:5555` on Android 6 after an initial USB `adb tcpip 5555`, or USB on the host).
-4. Run sync from this repo (or the same `adb push` command):
-
-   ```bash
-   task sync
-   ```
 
 ## Task reference
 
@@ -96,9 +107,10 @@ Requires [Task](https://taskfile.dev) (`task` on your PATH).
 | `devices` | List ADB devices |
 | `version` | Print Android build / device properties |
 | `list-installed-packages` | `pm list packages` on the frame |
-| `install-fotoo` | Install Fotoo split APKs from `fotoo_xapk/` |
 | `install-projectivy` | Install Projectivy and open the Home picker |
-| `sync` | Push `./photos/*` to the frame Pictures folder |
+| `install-fotoo` | Install Fotoo split APKs from `fotoo_xapk/` |
+| `install-syncthing` | Install Syncthing APK on the frame |
+| `sync` | Push `./photos/*` to the frame Pictures folder (optional) |
 | `restart-frame` | Reboot and launch Fotoo |
 | `android-back` | Send Android Back key |
 
@@ -106,10 +118,11 @@ Requires [Task](https://taskfile.dev) (`task` on your PATH).
 
 ```text
 .
-├── Taskfile.yml            # adb helpers
-├── fotoo_xapk/             # extracted Fotoo XAPK (gitignored)
-├── projectivy.apk          # launcher APK (gitignored)
-└── photos/                 # source photos for sync (gitignored)
+├── Taskfile.yml                      # adb helpers
+├── fotoo_xapk/                       # extracted Fotoo XAPK (gitignored)
+├── projectivy.apk                    # launcher APK (gitignored)
+├── Syncthing_1.23.0_APKPure.apk      # Syncthing APK (gitignored)
+└── photos/                           # optional local photos for `task sync` (gitignored)
 ```
 
 APKs and photo content stay local; the repo holds Task automation only.
@@ -117,6 +130,7 @@ APKs and photo content stay local; the repo holds Task automation only.
 ## Prerequisites
 
 - Frameo (or compatible) Android device with **developer options** and **USB debugging** (or network ADB) enabled
-- **adb** on the host
+- **adb** on the host for install tasks
 - **Task** for `task` commands
-- Fotoo XAPK and Projectivy APK obtained separately and placed as above
+- Fotoo XAPK, Projectivy APK, and Syncthing APK obtained separately and placed as above
+- A Syncthing peer or server that shares your photo library with the frame
