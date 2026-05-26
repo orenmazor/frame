@@ -30,3 +30,21 @@ tasks:
     dir: fotoo_xapk
     cmds:
       - adb install-multiple com.bo.fotoo.apk config.armeabi_v7a.apk config.en.apk config.xhdpi.apk
+
+  install-projectivy:
+    cmds:
+      - adb install projectivy.apk
+      - adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME
+
+  sync:
+    cmds:
+      - adb push ./photos/* /storage/emulated/0/Pictures/Frame/
+
+  restart-frame:
+    cmds:
+      - adb reboot
+      - adb shell monkey -p com.bo.fotoo 1
+
+  android-back:
+    cmds:
+      - adb shell input keyevent KEYCODE_BACK
