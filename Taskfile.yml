@@ -35,6 +35,7 @@ tasks:
     cmds:
       - adb install projectivy.apk
       - adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME
+      - echo "you gotta do some manual config here to get projectivy booting on your device"
 
   sync:
     cmds:
