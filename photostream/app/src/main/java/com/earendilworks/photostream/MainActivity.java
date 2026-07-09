@@ -1,10 +1,14 @@
 package com.earendilworks.photostream;
 
 import android.Manifest;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
 import android.app.Activity;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.graphics.drawable.Drawable;
+import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.os.Build;
 import android.os.Bundle;
@@ -29,15 +33,17 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_READ_STORAGE = 42;
     private static final String PHOTO_DIR = "/storage/emulated/0/Pictures/Frame";
-    private static final long SLIDE_MS = 10_000L;
+    private static final long PAN_MS = 20_000L;
     private static final long FADE_MS = 1_200L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<File> photos = new ArrayList<>();
+    private final Random random = new Random();
 
     private FrameLayout root;
     private ImageView imageA;
@@ -47,11 +53,13 @@ public class MainActivity extends Activity {
     private TextView photoDateText;
     private boolean showingA = true;
     private int photoIndex = 0;
+    private AnimatorSet animationA;
+    private AnimatorSet animationB;
 
     private final Runnable nextSlide = new Runnable() {
         @Override public void run() {
             showNextPhoto();
-            handler.postDelayed(this, SLIDE_MS);
+            handler.postDelayed(this, PAN_MS);
         }
     };
 
@@ -192,7 +200,7 @@ public class MainActivity extends Activity {
         photoIndex = 0;
         message.setVisibility(View.GONE);
         showNextPhoto();
-        handler.postDelayed(nextSlide, SLIDE_MS);
+        handler.postDelayed(nextSlide, PAN_MS);
     }
 
     private void loadPhotos() {
@@ -235,15 +243,16 @@ public class MainActivity extends Activity {
         ImageView incoming = showingA ? imageB : imageA;
         ImageView outgoing = showingA ? imageA : imageB;
 
-        Drawable drawable = Drawable.createFromPath(photo.getAbsolutePath());
-        if (drawable == null) {
+        Bitmap bitmap = decodeOrientedBitmap(photo);
+        if (bitmap == null) {
             showNextPhoto();
             return;
         }
 
-        incoming.setImageDrawable(drawable);
-        incoming.setScaleX(1.03f);
-        incoming.setScaleY(1.03f);
+        cancelAnimations(incoming, outgoing);
+
+        incoming.setImageBitmap(bitmap);
+        configureImageViewForBitmap(incoming, bitmap);
         incoming.setAlpha(0f);
         photoDateText.setText(photoDateLabel(photo));
 
@@ -252,13 +261,14 @@ public class MainActivity extends Activity {
         clockText.bringToFront();
         message.bringToFront();
 
-        incoming.animate()
-                .alpha(1f)
-                .scaleX(1f)
-                .scaleY(1f)
-                .setDuration(FADE_MS)
-                .setInterpolator(new AccelerateDecelerateInterpolator())
-                .start();
+        AnimatorSet incomingAnimation = buildIncomingAnimation(incoming);
+        if (incoming == imageA) {
+            animationA = incomingAnimation;
+        } else {
+            animationB = incomingAnimation;
+        }
+        incomingAnimation.start();
+
         outgoing.animate()
                 .alpha(0f)
                 .setDuration(FADE_MS)
@@ -266,6 +276,179 @@ public class MainActivity extends Activity {
                 .start();
 
         showingA = !showingA;
+    }
+
+    private void cancelAnimations(ImageView incoming, ImageView outgoing) {
+        AnimatorSet incomingSet = incoming == imageA ? animationA : animationB;
+        AnimatorSet outgoingSet = outgoing == imageA ? animationA : animationB;
+        if (incomingSet != null) incomingSet.cancel();
+        if (outgoingSet != null) outgoingSet.cancel();
+        incoming.animate().cancel();
+        outgoing.animate().cancel();
+    }
+
+    private void configureImageViewForBitmap(ImageView view, Bitmap bitmap) {
+        int rootWidth = Math.max(root.getWidth(), getResources().getDisplayMetrics().widthPixels);
+        int rootHeight = Math.max(root.getHeight(), getResources().getDisplayMetrics().heightPixels);
+        if (rootWidth <= 0 || rootHeight <= 0 || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+            rootAddDefaults(view);
+            view.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            return;
+        }
+
+        float imageAspect = (float) bitmap.getWidth() / (float) bitmap.getHeight();
+        float screenAspect = (float) rootWidth / (float) rootHeight;
+        int imageViewWidth;
+        int imageViewHeight;
+
+        if (imageAspect > screenAspect) {
+            imageViewHeight = rootHeight;
+            imageViewWidth = (int) Math.ceil(rootHeight * imageAspect);
+        } else {
+            imageViewWidth = rootWidth;
+            imageViewHeight = (int) Math.ceil(rootWidth / imageAspect);
+        }
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(imageViewWidth, imageViewHeight);
+        params.gravity = Gravity.LEFT | Gravity.TOP;
+        view.setLayoutParams(params);
+        view.setScaleType(ImageView.ScaleType.FIT_XY);
+    }
+
+    private AnimatorSet buildIncomingAnimation(ImageView view) {
+        int rootWidth = Math.max(root.getWidth(), getResources().getDisplayMetrics().widthPixels);
+        int rootHeight = Math.max(root.getHeight(), getResources().getDisplayMetrics().heightPixels);
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) view.getLayoutParams();
+        float overflowX = Math.max(0f, params.width - rootWidth);
+        float overflowY = Math.max(0f, params.height - rootHeight);
+
+        boolean panHorizontally = overflowX > overflowY;
+        boolean reverse = random.nextBoolean();
+        float startX = 0f;
+        float endX = 0f;
+        float startY = 0f;
+        float endY = 0f;
+
+        if (panHorizontally && overflowX > 0f) {
+            startX = reverse ? -overflowX : 0f;
+            endX = reverse ? 0f : -overflowX;
+            float smallDriftY = rootHeight * 0.015f;
+            startY = randomBetween(-smallDriftY, smallDriftY);
+            endY = -startY;
+        } else if (overflowY > 0f) {
+            startY = reverse ? -overflowY : 0f;
+            endY = reverse ? 0f : -overflowY;
+            float smallDriftX = rootWidth * 0.015f;
+            startX = randomBetween(-smallDriftX, smallDriftX);
+            endX = -startX;
+        } else {
+            float maxPanX = rootWidth * 0.035f;
+            float maxPanY = rootHeight * 0.035f;
+            startX = randomBetween(-maxPanX, maxPanX);
+            startY = randomBetween(-maxPanY, maxPanY);
+            endX = -startX;
+            endY = -startY;
+        }
+
+        float startScale = 1.01f;
+        float endScale = 1.05f;
+
+        view.setPivotX(params.width / 2f);
+        view.setPivotY(params.height / 2f);
+        view.setTranslationX(startX);
+        view.setTranslationY(startY);
+        view.setScaleX(startScale);
+        view.setScaleY(startScale);
+
+        ObjectAnimator fade = ObjectAnimator.ofFloat(view, "alpha", 0f, 1f);
+        fade.setDuration(FADE_MS);
+
+        ObjectAnimator scaleX = ObjectAnimator.ofFloat(view, "scaleX", startScale, endScale);
+        ObjectAnimator scaleY = ObjectAnimator.ofFloat(view, "scaleY", startScale, endScale);
+        ObjectAnimator translationX = ObjectAnimator.ofFloat(view, "translationX", startX, endX);
+        ObjectAnimator translationY = ObjectAnimator.ofFloat(view, "translationY", startY, endY);
+        scaleX.setDuration(PAN_MS);
+        scaleY.setDuration(PAN_MS);
+        translationX.setDuration(PAN_MS);
+        translationY.setDuration(PAN_MS);
+
+        AnimatorSet set = new AnimatorSet();
+        set.setInterpolator(new AccelerateDecelerateInterpolator());
+        set.playTogether(fade, scaleX, scaleY, translationX, translationY);
+        return set;
+    }
+
+    private float randomBetween(float min, float max) {
+        if (max <= min) return 0f;
+        return min + random.nextFloat() * (max - min);
+    }
+
+    private Bitmap decodeOrientedBitmap(File photo) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(photo.getAbsolutePath(), bounds);
+
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight);
+        Bitmap bitmap = BitmapFactory.decodeFile(photo.getAbsolutePath(), options);
+        if (bitmap == null) return null;
+
+        int orientation = readExifOrientation(photo);
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.postRotate(90);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.postRotate(180);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.postRotate(270);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.postScale(1, -1);
+                break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                matrix.postRotate(90);
+                matrix.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                matrix.postRotate(270);
+                matrix.postScale(-1, 1);
+                break;
+            default:
+                return bitmap;
+        }
+
+        try {
+            Bitmap oriented = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            if (oriented != bitmap) bitmap.recycle();
+            return oriented;
+        } catch (OutOfMemoryError ignored) {
+            return bitmap;
+        }
+    }
+
+    private int sampleSize(int width, int height) {
+        int targetWidth = Math.max(root.getWidth() * 2, 1920);
+        int targetHeight = Math.max(root.getHeight() * 2, 1080);
+        int sample = 1;
+        while (width / sample > targetWidth * 2 || height / sample > targetHeight * 2) {
+            sample *= 2;
+        }
+        return sample;
+    }
+
+    private int readExifOrientation(File photo) {
+        try {
+            ExifInterface exif = new ExifInterface(photo.getAbsolutePath());
+            return exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+        } catch (IOException ignored) {
+            return ExifInterface.ORIENTATION_NORMAL;
+        }
     }
 
     private String photoDateLabel(File photo) {
