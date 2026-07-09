@@ -26,10 +26,9 @@ tasks:
     cmds:
       - adb shell pm list packages
 
-  install-fotoo:
-    dir: fotoo_xapk
+  list-filesystem:
     cmds:
-      - adb install-multiple com.bo.fotoo.apk config.armeabi_v7a.apk config.en.apk config.xhdpi.apk
+      - adb shell ls -la {{.PATH | default "/"}}
 
   install-projectivy:
     cmds:
@@ -53,3 +52,21 @@ tasks:
   install-syncthing:
     cmds:
       - adb install Syncthing_1.23.0_APKPure.apk
+
+  run-syncthing:
+    cmds:
+      - adb shell monkey -p com.nutomic.syncthingandroid 1
+
+  build-photostream:
+    dir: photostream
+    cmds:
+      - ./gradlew :app:assembleDebug
+
+  install-photostream:
+    deps: [build-photostream]
+    cmds:
+      - adb install -r photostream/app/build/outputs/apk/debug/app-debug.apk
+
+  run-photostream:
+    cmds:
+      - adb shell monkey -p com.earendilworks.photostream 1
